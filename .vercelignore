@@ -1,0 +1,7 @@
+node_modules
+.next
+stockfish/stockfish-windows-x86-64-universal.exe
+stockfish/src
+stockfish/wiki
+stockfish/scripts
+

@@ -33,3 +33,6 @@ next-env.d.ts
 # Large binary
 stockfish/*.exe
 *.exe
+
+# Stockfish 19 WASM (copied from node_modules by scripts/copy-stockfish.mjs)
+/public/stockfish/

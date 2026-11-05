@@ -26,7 +26,10 @@ class BrowserWasmStockfish {
   private listeners: Set<(line: string) => void> = new Set();
   private queue: Promise<unknown> = Promise.resolve();
   private currentMultiPV = 1;
-  public engineVariant = "Stockfish WASM (Web Worker)";
+  public engineVariant = "Stockfish 19 WASM";
+  // Called while the ~95 MB NNUE .wasm is downloading (loaded/total in bytes)
+  public onDownloadProgress: ((loaded: number, total: number) => void) | null =
+    null;
 
   private async ensureWorker(): Promise<Worker> {
     if (this.worker && this.isReady) {
@@ -35,23 +38,30 @@ class BrowserWasmStockfish {
 
     return new Promise((resolve, reject) => {
       try {
-        const supportsWasm =
-          typeof WebAssembly === "object" &&
-          typeof WebAssembly.validate === "function";
+        // Full (non-lite) Stockfish 19. The multi-threaded build needs
+        // SharedArrayBuffer (cross-origin isolation via COOP/COEP headers);
+        // otherwise fall back to the full single-threaded build.
+        const multiThread =
+          typeof SharedArrayBuffer !== "undefined" &&
+          globalThis.crossOriginIsolated === true;
+        this.engineVariant = multiThread
+          ? "Stockfish 19 WASM (Multi-Thread)"
+          : "Stockfish 19 WASM (Single-Thread)";
 
-        const hasSharedArrayBuffer = typeof SharedArrayBuffer !== "undefined";
-        this.engineVariant = hasSharedArrayBuffer
-          ? "Stockfish WASM (Multi-Thread Ready)"
-          : "Stockfish WASM (Single-Thread Fallback)";
-
-        // Use stockfish.js in public/stockfish which works reliably across all browsers & Vercel
-        const workerPath = supportsWasm
-          ? "/stockfish/stockfish.js"
-          : "/stockfish/stockfish.js";
+        const workerPath = multiThread
+          ? "/stockfish/stockfish-19.js"
+          : "/stockfish/stockfish-19-single.js";
 
         const worker = new Worker(workerPath);
         this.worker = worker;
         this.isReady = false;
+
+        const progress = new MessageChannel();
+        progress.port1.onmessage = (e: MessageEvent) => {
+          const { loaded, total } = e.data as { loaded: number; total: number };
+          this.onDownloadProgress?.(loaded, total);
+        };
+        worker.postMessage({ progressPort: progress.port2 }, [progress.port2]);
 
         worker.onmessage = (e: MessageEvent) => {
           const line =
@@ -70,6 +80,13 @@ class BrowserWasmStockfish {
 
         const initListener = (line: string) => {
           if (line === "uciok") {
+            if (multiThread) {
+              const threads = Math.max(
+                1,
+                Math.min(8, (navigator.hardwareConcurrency || 2) - 1)
+              );
+              worker.postMessage(`setoption name Threads value ${threads}`);
+            }
             worker.postMessage("setoption name Hash value 32");
             worker.postMessage("isready");
           } else if (line === "readyok") {
@@ -409,6 +426,15 @@ export async function analyzeGame(params: {
     }
   } else {
     const wasmEngine = getBrowserWasmEngine();
+    wasmEngine.onDownloadProgress = (loaded, total) => {
+      onProgress?.(
+        0,
+        Math.max(1, totalPositions - 1),
+        `Mengunduh Stockfish 19 NNUE (${(loaded / 1048576).toFixed(0)} / ${(
+          total / 1048576
+        ).toFixed(0)} MB, sekali saja)...`
+      );
+    };
     for (let i = 0; i < totalPositions; i++) {
       onProgress?.(
         i,
@@ -416,11 +442,12 @@ export async function analyzeGame(params: {
         `Mengevaluasi langkah ${i} / ${Math.max(
           1,
           totalPositions - 1
-        )} (Stockfish WASM Web Worker)...`
+        )} (${wasmEngine.engineVariant})...`
       );
       const ev = await wasmEngine.evaluate(fensToEvaluate[i], depth, multiPV);
       evaluations.push(ev);
     }
+    wasmEngine.onDownloadProgress = null;
   }
 
   const evaluatedMoves: EvaluatedMove[] = [];

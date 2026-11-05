@@ -7,28 +7,56 @@
 }
 
 body {
-  background-color: #090d16;
-  color: #f8fafc;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-    Oxygen, Ubuntu, Cantarell, "Open Sans", "Helvetica Neue", sans-serif;
+  background-color: #0f0e0c;
+  color: #ece6d9;
+  font-feature-settings: "ss02";
 }
 
-/* Custom subtle scrollbars */
+/* Browser surfaces themed from the palette */
+::selection {
+  background: #ff5b2e;
+  color: #0f0e0c;
+}
+
+* {
+  caret-color: #ff5b2e;
+  scrollbar-width: thin;
+  scrollbar-color: #4a443c transparent;
+}
+
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
 }
 
 ::-webkit-scrollbar-track {
-  background: rgba(15, 23, 42, 0.6);
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(71, 85, 105, 0.7);
+  background: #34302a;
+  border: 2px solid #0f0e0c;
   border-radius: 9999px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(16, 185, 129, 0.7);
+  background: #ff5b2e;
 }
 
+:focus-visible {
+  outline: 2px solid #ff5b2e;
+  outline-offset: 2px;
+}
+
+a {
+  text-underline-offset: 3px;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+select option {
+  background: #171512;
+  color: #ece6d9;
+}

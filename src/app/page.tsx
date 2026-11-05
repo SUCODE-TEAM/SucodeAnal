@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState, useCallback, useMemo } from "react";
+import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { Chess, Square } from "chess.js";
 import { Chessboard } from "react-chessboard";
 import {
@@ -31,16 +31,18 @@ import {
   ChevronRight,
   FlipVertical2,
   Cpu,
-  Settings2,
+  SlidersHorizontal,
   Target,
   Eye,
   RotateCcw,
   CheckCircle2,
   XCircle,
   Loader2,
-  Sparkles,
+  Compass,
   BookOpen,
 } from "lucide-react";
+import { ChessComBadge } from "@/components/ChessComBadge";
+import { gsap, useGSAP, SplitText, MOTION_OK } from "@/lib/gsap";
 
 export default function HomePage() {
   // Engine Settings (NFR 8.2: Depth 12 Cepat, 16 Standar, 20 Mendalam, MultiPV 1-3)
@@ -51,7 +53,7 @@ export default function HomePage() {
     "browser-wasm"
   );
   const [engineLabel, setEngineLabel] = useState<string>(
-    "Stockfish WASM (Web Worker)"
+    "Stockfish 19 WASM"
   );
 
   // Analysis State
@@ -85,6 +87,14 @@ export default function HomePage() {
   const [cachedAnalyses, setCachedAnalyses] = useState<GameAnalysisResult[]>(
     []
   );
+
+  // GSAP Refs
+  const pageRef = useRef<HTMLDivElement>(null);
+  const brandTitleRef = useRef<HTMLHeadingElement>(null);
+  const boardStageRef = useRef<HTMLDivElement>(null);
+  const coachPanelRef = useRef<HTMLDivElement>(null);
+  const moveListRef = useRef<HTMLDivElement>(null);
+  const progressFillRef = useRef<HTMLDivElement>(null);
 
   // Initialize engine status + IndexedDB cache + load default sample game
   useEffect(() => {
@@ -135,6 +145,61 @@ export default function HomePage() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Masthead SplitText & workspace entrance choreography
+  useGSAP(
+    () => {
+      const mm = gsap.matchMedia();
+      mm.add(MOTION_OK, () => {
+        const tl = gsap.timeline();
+        if (brandTitleRef.current) {
+          const split = SplitText.create(brandTitleRef.current, {
+            type: "chars",
+          });
+          tl.from(split.chars, {
+            yPercent: 110,
+            opacity: 0,
+            stagger: 0.025,
+            duration: 0.65,
+            ease: "expo.out",
+          });
+        }
+        tl.from(
+          ".gsap-masthead-item",
+          {
+            y: 14,
+            opacity: 0,
+            stagger: 0.05,
+            duration: 0.55,
+            clearProps: "transform,opacity",
+          },
+          0.15
+        );
+      });
+      return () => mm.revert();
+    },
+    { scope: pageRef }
+  );
+
+  // Animate workspace columns when a new game analysis loads
+  useGSAP(
+    () => {
+      if (!analysis) return;
+      const mm = gsap.matchMedia();
+      mm.add(MOTION_OK, () => {
+        gsap.from(".gsap-stage-block", {
+          y: 22,
+          opacity: 0,
+          stagger: 0.07,
+          duration: 0.65,
+          ease: "expo.out",
+          clearProps: "transform,opacity",
+        });
+      });
+      return () => mm.revert();
+    },
+    { scope: pageRef, dependencies: [analysis?.id] }
+  );
 
   const refreshCacheList = async () => {
     const list = await getAllCachedAnalyses();
@@ -196,10 +261,7 @@ export default function HomePage() {
     return analysis.moves[currentPly - 1];
   }, [analysis, currentPly]);
 
-  // Displayed board FEN:
-  // - If in Retry Mistake mode (and not yet solved), show `currentMove.fenBefore` so user can play the correction!
-  // - If user explored a custom move on the board, show `customFen`.
-  // - Otherwise show `currentMove.fenAfter` (or `analysis.initialFen` at ply 0).
+  // Displayed board FEN
   const displayedFen: string = useMemo(() => {
     if (customFen) return customFen;
     if (!analysis) {
@@ -236,6 +298,125 @@ export default function HomePage() {
     }
     return analysis.initialEval;
   }, [analysis, currentMove, customEval, displayedFen, retryMode, retrySolved]);
+
+  // GSAP reaction on ply change: coach badge pop, blunder tactile shake, and auto-scroll move list
+  useGSAP(
+    () => {
+      if (!analysis) return;
+      const mm = gsap.matchMedia();
+      mm.add(MOTION_OK, () => {
+        if (coachPanelRef.current) {
+          gsap.fromTo(
+            ".gsap-coach-badge",
+            { scale: 0.65, rotate: -10 },
+            {
+              scale: 1,
+              rotate: 0,
+              duration: 0.55,
+              ease: "elastic.out(1, 0.55)",
+              overwrite: true,
+            }
+          );
+          gsap.fromTo(
+            ".gsap-coach-line",
+            { x: 10, opacity: 0 },
+            {
+              x: 0,
+              opacity: 1,
+              stagger: 0.04,
+              duration: 0.35,
+              ease: "expo.out",
+              overwrite: true,
+            }
+          );
+        }
+
+        // Tactile board recoil when stepping onto a blunder
+        if (
+          currentMove?.classification === "blunder" &&
+          !retryMode &&
+          boardStageRef.current
+        ) {
+          gsap.fromTo(
+            boardStageRef.current,
+            { x: 0 },
+            {
+              keyframes: [
+                { x: -6, duration: 0.05 },
+                { x: 6, duration: 0.06 },
+                { x: -4, duration: 0.06 },
+                { x: 4, duration: 0.06 },
+                { x: 0, duration: 0.08 },
+              ],
+              ease: "power2.out",
+              clearProps: "transform",
+              overwrite: true,
+            }
+          );
+        }
+      });
+
+      // Smoothly scroll the active ply into view inside the scoresheet container
+      if (moveListRef.current && currentPly > 0) {
+        const activeBtn = moveListRef.current.querySelector<HTMLElement>(
+          `[data-ply="${currentPly}"]`
+        );
+        if (activeBtn) {
+          gsap.to(moveListRef.current, {
+            scrollTo: { y: activeBtn, offsetY: 72 },
+            duration: 0.4,
+            ease: "power3.out",
+            overwrite: true,
+          });
+        }
+      }
+
+      return () => mm.revert();
+    },
+    { scope: pageRef, dependencies: [currentPly, retryMode] }
+  );
+
+  // GSAP 3D perspective pulse when flipping board orientation
+  useGSAP(
+    () => {
+      if (!boardStageRef.current) return;
+      const mm = gsap.matchMedia();
+      mm.add(MOTION_OK, () => {
+        gsap.fromTo(
+          boardStageRef.current,
+          { opacity: 0.6, scale: 0.98 },
+          {
+            opacity: 1,
+            scale: 1,
+            duration: 0.35,
+            ease: "power2.out",
+            clearProps: "all",
+          }
+        );
+      });
+      return () => mm.revert();
+    },
+    { dependencies: [boardOrientation] }
+  );
+
+  const progressPercent = Math.min(
+    100,
+    Math.round((progressPly / Math.max(1, progressTotal)) * 100)
+  );
+
+  // GSAP smooth progress bar width tween
+  useGSAP(
+    () => {
+      if (!progressFillRef.current || !isAnalyzing) return;
+      gsap.to(progressFillRef.current, {
+        width: `${progressPercent}%`,
+        duration: 0.35,
+        ease: "power2.out",
+        overwrite: true,
+      });
+    },
+    { dependencies: [progressPercent, isAnalyzing] }
+  );
 
   // Navigate to a specific ply
   const goToPly = useCallback(
@@ -308,7 +489,7 @@ export default function HomePage() {
         move.color === "w" ? "Putih" : "Hitam"
       }: Pada partai asli dimainkan ${move.san} (${
         CLASSIFICATION_META[move.classification].shortLabel
-      }). Tarik buah catur di papan untuk menebak langkah terbaik Stockfish!`,
+      }). Tarik buah catur di papan untuk menemukan langkah terbaik Stockfish 19!`,
     });
   };
 
@@ -347,13 +528,13 @@ export default function HomePage() {
           setCustomFen(chess.fen());
           setRetryFeedback({
             type: "success",
-            message: `Tepat sekali! ${moveAttempt.san} adalah langkah terbaik rekomendasi Stockfish!`,
+            message: `Tepat sekali! ${moveAttempt.san} adalah langkah terbaik rekomendasi Stockfish 19.`,
           });
           return true;
         } else {
           setRetryFeedback({
             type: "error",
-            message: `Belum tepat (${moveAttempt.san}). Itu bukan langkah terbaik di posisi ini. Coba lagi atau klik "Lihat Petunjuk"!`,
+            message: `Belum tepat (${moveAttempt.san}). Itu bukan langkah terbaik di posisi ini. Coba lagi atau klik "Lihat Petunjuk".`,
           });
           return false;
         }
@@ -386,7 +567,7 @@ export default function HomePage() {
       ) {
         const from = currentMove.bestMoveUci.slice(0, 2) as Square;
         const to = currentMove.bestMoveUci.slice(2, 4) as Square;
-        arrows.push([from, to, "rgba(34, 197, 94, 0.85)"]);
+        arrows.push([from, to, "rgba(255, 91, 46, 0.9)"]);
       }
       return arrows;
     }
@@ -395,7 +576,7 @@ export default function HomePage() {
     if (customFen && customEval && customEval.bestMoveUci.length >= 4) {
       const from = customEval.bestMoveUci.slice(0, 2) as Square;
       const to = customEval.bestMoveUci.slice(2, 4) as Square;
-      arrows.push([from, to, "rgba(34, 197, 94, 0.85)"]);
+      arrows.push([from, to, "rgba(255, 91, 46, 0.9)"]);
       return arrows;
     }
 
@@ -410,10 +591,10 @@ export default function HomePage() {
       ) {
         const bestFrom = currentMove.bestMoveUci.slice(0, 2) as Square;
         const bestTo = currentMove.bestMoveUci.slice(2, 4) as Square;
-        arrows.push([bestFrom, bestTo, "rgba(34, 197, 94, 0.85)"]);
+        arrows.push([bestFrom, bestTo, "rgba(34, 197, 94, 0.88)"]);
       }
 
-      // 2. Also show next best reply in the current position (light blue arrow)
+      // 2. Also show next best reply in the current position
       if (
         currentMove.evalAfter.bestMoveUci &&
         currentMove.evalAfter.bestMoveUci.length >= 4
@@ -423,7 +604,7 @@ export default function HomePage() {
           2
         ) as Square;
         const nextTo = currentMove.evalAfter.bestMoveUci.slice(2, 4) as Square;
-        arrows.push([nextFrom, nextTo, "rgba(56, 189, 248, 0.65)"]);
+        arrows.push([nextFrom, nextTo, "rgba(255, 91, 46, 0.72)"]);
       }
     } else if (
       analysis &&
@@ -432,7 +613,7 @@ export default function HomePage() {
     ) {
       const initFrom = analysis.initialEval.bestMoveUci.slice(0, 2) as Square;
       const initTo = analysis.initialEval.bestMoveUci.slice(2, 4) as Square;
-      arrows.push([initFrom, initTo, "rgba(34, 197, 94, 0.75)"]);
+      arrows.push([initFrom, initTo, "rgba(34, 197, 94, 0.82)"]);
     }
 
     return arrows;
@@ -454,8 +635,8 @@ export default function HomePage() {
     if (retryMode && !retrySolved && showRetryHint && currentMove) {
       const hintFrom = currentMove.bestMoveUci.slice(0, 2);
       styles[hintFrom] = {
-        backgroundColor: "rgba(34, 197, 94, 0.45)",
-        boxShadow: "inset 0 0 0 3px #22c55e",
+        backgroundColor: "rgba(255, 91, 46, 0.45)",
+        boxShadow: "inset 0 0 0 3px #ff5b2e",
       };
       return styles;
     }
@@ -463,7 +644,7 @@ export default function HomePage() {
     if (currentMove && !retryMode) {
       const meta = CLASSIFICATION_META[currentMove.classification];
       styles[currentMove.from] = {
-        backgroundColor: "rgba(250, 204, 21, 0.22)",
+        backgroundColor: "rgba(255, 255, 255, 0.16)",
       };
       styles[currentMove.to] = {
         backgroundColor: meta.squareHighlight,
@@ -471,6 +652,43 @@ export default function HomePage() {
     }
     return styles;
   }, [currentMove, customFen, retryMode, retrySolved, showRetryHint]);
+
+  // Render Chess.com classification badge on the target square of the played move
+  const customSquareRenderer = useCallback(
+    ({
+      square,
+      children,
+      style,
+    }: {
+      square: Square;
+      children: React.ReactNode;
+      style: Record<string, string | number>;
+    }) => {
+      const isTargetSquare =
+        !customFen &&
+        !retryMode &&
+        currentMove &&
+        currentMove.to === square;
+
+      return (
+        <div style={{ ...style, position: "relative" }}>
+          {children}
+          {isTargetSquare && (
+            <div
+              className="absolute top-0.5 right-0.5 z-20 pointer-events-none drop-shadow"
+              style={{ transform: "translate(15%, -15%)" }}
+            >
+              <ChessComBadge
+                classification={currentMove.classification}
+                size={22}
+              />
+            </div>
+          )}
+        </div>
+      );
+    },
+    [customFen, retryMode, currentMove]
+  );
 
   // Group moves into pairs (1. e4 e5) for the Move Table
   const movePairs = useMemo(() => {
@@ -491,102 +709,93 @@ export default function HomePage() {
     return pairs;
   }, [analysis]);
 
-  const progressPercent = Math.min(
-    100,
-    Math.round((progressPly / Math.max(1, progressTotal)) * 100)
-  );
+  const topPlayer =
+    boardOrientation === "white"
+      ? analysis?.metadata.black
+      : analysis?.metadata.white;
+  const bottomPlayer =
+    boardOrientation === "white"
+      ? analysis?.metadata.white
+      : analysis?.metadata.black;
+  const topAccuracy =
+    boardOrientation === "white"
+      ? analysis?.blackAccuracy
+      : analysis?.whiteAccuracy;
+  const bottomAccuracy =
+    boardOrientation === "white"
+      ? analysis?.whiteAccuracy
+      : analysis?.blackAccuracy;
 
   return (
-    <div className="min-h-screen flex flex-col">
-      {/* Top Navbar */}
-      <header className="sticky top-0 z-30 border-b border-slate-800/80 bg-[#090d16]/90 backdrop-blur-md">
-        <div className="max-w-[1440px] mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-emerald-500 to-emerald-700 flex items-center justify-center text-white font-black text-lg shadow-lg shadow-emerald-900/40">
-              ♟
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h1 className="text-base sm:text-lg font-extrabold tracking-tight text-white">
-                  Chess<span className="text-emerald-400">Insight</span>
-                </h1>
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
-                  Unlimited Game Review
-                </span>
-              </div>
-              <p className="text-[11px] text-slate-400 hidden sm:block">
-                Analisa Pertandingan Chess.com & PGN Gratis Berbasis Stockfish
-              </p>
-            </div>
+    <div ref={pageRef} className="min-h-screen flex flex-col bg-ink-950 text-paper-100">
+      {/* Editorial Masthead */}
+      <header className="border-b border-ink-700 bg-ink-950/95 backdrop-blur-sm sticky top-0 z-30">
+        <div className="max-w-[1440px] mx-auto px-4 sm:px-6 py-3.5 flex flex-wrap items-center justify-between gap-4">
+          <div className="flex items-baseline gap-4">
+            <h1
+              ref={brandTitleRef}
+              className="font-display text-2xl sm:text-3xl tracking-tight text-paper-100 leading-none overflow-hidden"
+            >
+              ChessInsight
+            </h1>
+            <span className="gsap-masthead-item hidden md:inline-block text-xs font-mono text-paper-400">
+              Stockfish 19 Full NNUE · Meja Analisa Catur
+            </span>
           </div>
 
           {/* Engine & Depth Controls (NFR 8.2) */}
           <div className="flex flex-wrap items-center gap-2 text-xs">
             {/* Engine Mode Selector */}
-            <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-800 rounded-xl px-2.5 py-1.5">
-              <Cpu className="w-3.5 h-3.5 text-emerald-400" />
-              <span className="text-slate-400 hidden md:inline">Engine:</span>
+            <div className="gsap-masthead-item flex items-center gap-1.5 h-8 px-2.5 rounded-[3px] bg-ink-900 ring-1 ring-ink-700">
+              <Cpu className="w-3.5 h-3.5 text-signal" />
+              <span className="text-paper-400 hidden sm:inline">Engine:</span>
               <select
                 value={engineMode}
                 onChange={(e) => {
                   const val = e.target.value as "native-exe" | "browser-wasm";
                   setEngineMode(val);
                 }}
-                className="bg-transparent text-slate-200 font-semibold focus:outline-none cursor-pointer"
-                title="Pilih mode eksekusi Stockfish"
+                className="bg-transparent text-paper-100 font-mono text-xs focus:outline-none cursor-pointer"
+                title={engineLabel}
               >
                 {nativeAvailable && (
-                  <option value="native-exe" className="bg-slate-900">
-                    Stockfish 19 Native (.EXE Lokal)
+                  <option value="native-exe">
+                    SF 19 Native (.EXE)
                   </option>
                 )}
-                <option value="browser-wasm" className="bg-slate-900">
-                  Stockfish WASM (Browser / Vercel)
+                <option value="browser-wasm">
+                  SF 19 Full WASM (NNUE)
                 </option>
               </select>
             </div>
 
             {/* Depth Selector */}
-            <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-800 rounded-xl px-2.5 py-1.5">
-              <Settings2 className="w-3.5 h-3.5 text-sky-400" />
-              <span className="text-slate-400 hidden md:inline">Depth:</span>
+            <div className="gsap-masthead-item flex items-center gap-1.5 h-8 px-2.5 rounded-[3px] bg-ink-900 ring-1 ring-ink-700">
+              <SlidersHorizontal className="w-3.5 h-3.5 text-paper-300" />
               <select
                 value={depth}
                 onChange={(e) => setDepth(Number(e.target.value))}
-                className="bg-transparent text-slate-200 font-semibold focus:outline-none cursor-pointer"
+                className="bg-transparent text-paper-100 font-mono text-xs focus:outline-none cursor-pointer"
+                aria-label="Kedalaman kalkulasi Stockfish"
               >
-                <option value={12} className="bg-slate-900">
-                  Depth 12 (Cepat)
-                </option>
-                <option value={14} className="bg-slate-900">
-                  Depth 14 (Seimbang)
-                </option>
-                <option value={16} className="bg-slate-900">
-                  Depth 16 (Standar)
-                </option>
-                <option value={20} className="bg-slate-900">
-                  Depth 20 (Mendalam)
-                </option>
+                <option value={12}>Depth 12 · Cepat</option>
+                <option value={14}>Depth 14 · Seimbang</option>
+                <option value={16}>Depth 16 · Standar</option>
+                <option value={20}>Depth 20 · Mendalam</option>
               </select>
             </div>
 
             {/* MultiPV Selector */}
-            <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-800 rounded-xl px-2.5 py-1.5">
-              <span className="text-slate-400">Variasi:</span>
+            <div className="gsap-masthead-item flex items-center gap-1.5 h-8 px-2.5 rounded-[3px] bg-ink-900 ring-1 ring-ink-700">
               <select
                 value={multiPV}
                 onChange={(e) => setMultiPV(Number(e.target.value))}
-                className="bg-transparent text-slate-200 font-semibold focus:outline-none cursor-pointer"
+                className="bg-transparent text-paper-100 font-mono text-xs focus:outline-none cursor-pointer"
+                aria-label="Jumlah jalur variasi MultiPV"
               >
-                <option value={1} className="bg-slate-900">
-                  1 Baris (MultiPV 1)
-                </option>
-                <option value={2} className="bg-slate-900">
-                  2 Baris (MultiPV 2)
-                </option>
-                <option value={3} className="bg-slate-900">
-                  3 Baris (MultiPV 3)
-                </option>
+                <option value={1}>MultiPV 1</option>
+                <option value={2}>MultiPV 2</option>
+                <option value={3}>MultiPV 3</option>
               </select>
             </div>
 
@@ -604,11 +813,11 @@ export default function HomePage() {
                     true
                   )
                 }
-                className="px-3 py-1.5 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/40 text-emerald-300 font-semibold transition flex items-center gap-1.5"
+                className="gsap-masthead-item h-8 px-3 rounded-[3px] bg-paper-100 hover:bg-signal text-ink-950 font-semibold transition flex items-center gap-1.5 disabled:opacity-40"
                 title="Hitung ulang analisa dengan Depth / Engine saat ini"
               >
                 <RotateCcw className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Analisa Ulang</span>
+                <span className="hidden sm:inline">Hitung Ulang</span>
               </button>
             )}
           </div>
@@ -616,8 +825,8 @@ export default function HomePage() {
       </header>
 
       {/* Main Content Container */}
-      <main className="flex-1 max-w-[1440px] w-full mx-auto px-4 py-5 space-y-5">
-        {/* Top Game Importer (Chess.com API / Manual PGN & FEN / Samples / IndexedDB History) */}
+      <main className="flex-1 max-w-[1440px] w-full mx-auto px-4 sm:px-6 py-5 space-y-6">
+        {/* Top Game Importer */}
         <GameSelector
           onSelectGame={(pgnOrFen, meta) =>
             runGameAnalysis(pgnOrFen, meta, depth, multiPV, engineMode)
@@ -637,81 +846,72 @@ export default function HomePage() {
           isAnalyzing={isAnalyzing}
         />
 
-        {/* Progress Bar during Stockfish Batch Calculation */}
+        {/* Progress Bar during Stockfish 19 Calculation */}
         {isAnalyzing && (
-          <div className="rounded-2xl bg-slate-900/95 border border-emerald-500/40 p-4 shadow-lg space-y-2">
+          <div className="p-4 border border-signal/50 bg-ink-900 space-y-2.5">
             <div className="flex items-center justify-between text-xs">
-              <span className="font-semibold text-emerald-400 flex items-center gap-2">
-                <Loader2 className="w-4 h-4 animate-spin" />
-                {progressText || "Menjalankan evaluasi Stockfish..."}
+              <span className="font-mono text-paper-100 flex items-center gap-2">
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-signal" />
+                {progressText || "Menjalankan evaluasi Stockfish 19..."}
               </span>
-              <span className="font-mono font-bold text-white">
+              <span className="font-mono font-semibold text-signal tabular">
                 {progressPercent}%
               </span>
             </div>
-            <div className="w-full h-2.5 rounded-full bg-slate-800 overflow-hidden">
+            <div className="w-full h-1.5 bg-ink-800 overflow-hidden">
               <div
-                className="h-full bg-gradient-to-r from-emerald-500 to-teal-400 transition-all duration-200"
-                style={{ width: `${progressPercent}%` }}
+                ref={progressFillRef}
+                className="h-full bg-signal"
+                style={{ width: "0%" }}
               />
             </div>
           </div>
         )}
 
         {errorMessage && (
-          <div className="rounded-xl bg-red-500/10 border border-red-500/30 p-3.5 text-xs text-red-300">
+          <div className="p-3.5 border border-signal bg-ink-900 text-xs text-paper-100">
             {errorMessage}
           </div>
         )}
 
         {/* Analysis Workspace Grid */}
         {analysis && (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
-            {/* LEFT / CENTER COLUMN: Interactive Chessboard + EvalBar + Controls + EvalGraph */}
-            <div className="lg:col-span-7 xl:col-span-7 space-y-4">
-              {/* Top Player Banner */}
-              <div className="flex items-center justify-between px-4 py-2.5 rounded-xl bg-slate-900/90 border border-slate-800">
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 items-start">
+            {/* LEFT COLUMN: Interactive Chessboard + EvalBar + Controls + EvalGraph */}
+            <div className="lg:col-span-7 space-y-4">
+              {/* Top Player Strip */}
+              <div className="gsap-stage-block flex items-center justify-between py-2 border-b border-ink-700">
                 <div className="flex items-center gap-2.5">
                   <span
-                    className={`w-3.5 h-3.5 rounded-sm border ${
+                    className={`w-3 h-3 rounded-full ring-1 ${
                       boardOrientation === "white"
-                        ? "bg-slate-800 border-slate-500"
-                        : "bg-white border-slate-300"
+                        ? "bg-ink-950 ring-paper-400"
+                        : "bg-paper-100 ring-paper-300"
                     }`}
                   />
-                  <div>
-                    <span className="text-sm font-bold text-white">
-                      {boardOrientation === "white"
-                        ? analysis.metadata.black.username
-                        : analysis.metadata.white.username}
+                  <span className="font-display text-lg text-paper-100 leading-none">
+                    {topPlayer?.username}
+                  </span>
+                  {topPlayer?.rating && (
+                    <span className="text-xs text-paper-400 font-mono tabular">
+                      {topPlayer.rating}
                     </span>
-                    {(boardOrientation === "white"
-                      ? analysis.metadata.black.rating
-                      : analysis.metadata.white.rating) && (
-                      <span className="text-xs text-slate-400 ml-1.5 font-mono">
-                        (
-                        {boardOrientation === "white"
-                          ? analysis.metadata.black.rating
-                          : analysis.metadata.white.rating}
-                        )
-                      </span>
-                    )}
-                  </div>
+                  )}
                 </div>
 
-                <div className="flex items-center gap-2 text-xs">
-                  <span className="text-slate-400">Akurasi:</span>
-                  <span className="px-2 py-0.5 rounded-md bg-slate-800 font-bold text-white font-mono">
-                    {boardOrientation === "white"
-                      ? analysis.blackAccuracy
-                      : analysis.whiteAccuracy}
-                    %
+                <div className="flex items-baseline gap-2 text-xs">
+                  <span className="text-paper-400">Akurasi</span>
+                  <span className="font-mono font-semibold text-sm text-paper-100 tabular">
+                    {topAccuracy}%
                   </span>
                 </div>
               </div>
 
               {/* EvalBar + Interactive 2D Chessboard (FR-04 & FR-06) */}
-              <div className="grid grid-cols-[auto_1fr] gap-2.5 sm:gap-3 items-stretch">
+              <div
+                ref={boardStageRef}
+                className="gsap-stage-block grid grid-cols-[auto_1fr] gap-3 sm:gap-4 items-stretch"
+              >
                 <EvalBar
                   cp={activeEval.cp}
                   mate={activeEval.mate}
@@ -719,7 +919,7 @@ export default function HomePage() {
                   orientation={boardOrientation}
                 />
 
-                <div className="relative w-full max-w-[540px] mx-auto aspect-square rounded-xl overflow-hidden shadow-2xl border border-slate-800 bg-slate-900">
+                <div className="relative w-full max-w-[560px] mx-auto aspect-square rounded-[3px] overflow-hidden ring-1 ring-ink-700 shadow-[0_18px_40px_rgba(0,0,0,0.55)] bg-ink-900">
                   <Chessboard
                     id="ChessInsightBoard"
                     position={displayedFen}
@@ -727,62 +927,50 @@ export default function HomePage() {
                     boardOrientation={boardOrientation}
                     customArrows={customArrows}
                     customSquareStyles={customSquareStyles}
-                    customDarkSquareStyle={{ backgroundColor: "#4b7399" }}
-                    customLightSquareStyle={{ backgroundColor: "#eae9d2" }}
+                    customSquare={customSquareRenderer}
+                    customDarkSquareStyle={{ backgroundColor: "#6e5844" }}
+                    customLightSquareStyle={{ backgroundColor: "#e2d9c5" }}
                     animationDuration={180}
                   />
                 </div>
               </div>
 
-              {/* Bottom Player Banner */}
-              <div className="flex items-center justify-between px-4 py-2.5 rounded-xl bg-slate-900/90 border border-slate-800">
+              {/* Bottom Player Strip */}
+              <div className="gsap-stage-block flex items-center justify-between py-2 border-b border-ink-700">
                 <div className="flex items-center gap-2.5">
                   <span
-                    className={`w-3.5 h-3.5 rounded-sm border ${
+                    className={`w-3 h-3 rounded-full ring-1 ${
                       boardOrientation === "white"
-                        ? "bg-white border-slate-300"
-                        : "bg-slate-800 border-slate-500"
+                        ? "bg-paper-100 ring-paper-300"
+                        : "bg-ink-950 ring-paper-400"
                     }`}
                   />
-                  <div>
-                    <span className="text-sm font-bold text-white">
-                      {boardOrientation === "white"
-                        ? analysis.metadata.white.username
-                        : analysis.metadata.black.username}
+                  <span className="font-display text-lg text-paper-100 leading-none">
+                    {bottomPlayer?.username}
+                  </span>
+                  {bottomPlayer?.rating && (
+                    <span className="text-xs text-paper-400 font-mono tabular">
+                      {bottomPlayer.rating}
                     </span>
-                    {(boardOrientation === "white"
-                      ? analysis.metadata.white.rating
-                      : analysis.metadata.black.rating) && (
-                      <span className="text-xs text-slate-400 ml-1.5 font-mono">
-                        (
-                        {boardOrientation === "white"
-                          ? analysis.metadata.white.rating
-                          : analysis.metadata.black.rating}
-                        )
-                      </span>
-                    )}
-                  </div>
+                  )}
                 </div>
 
-                <div className="flex items-center gap-2 text-xs">
-                  <span className="text-slate-400">Akurasi:</span>
-                  <span className="px-2 py-0.5 rounded-md bg-slate-800 font-bold text-white font-mono">
-                    {boardOrientation === "white"
-                      ? analysis.whiteAccuracy
-                      : analysis.blackAccuracy}
-                    %
+                <div className="flex items-baseline gap-2 text-xs">
+                  <span className="text-paper-400">Akurasi</span>
+                  <span className="font-mono font-semibold text-sm text-paper-100 tabular">
+                    {bottomAccuracy}%
                   </span>
                 </div>
               </div>
 
               {/* Board Navigation Toolbar */}
-              <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 rounded-xl bg-slate-900/90 border border-slate-800">
-                <div className="flex items-center gap-1.5">
+              <div className="gsap-stage-block flex flex-wrap items-center justify-between gap-2 pt-1">
+                <div className="flex items-center gap-1">
                   <button
                     type="button"
                     onClick={() => goToPly(0)}
                     disabled={currentPly === 0 && !customFen}
-                    className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-200 transition"
+                    className="h-9 w-9 flex items-center justify-center rounded-[3px] bg-ink-900 ring-1 ring-ink-700 hover:ring-paper-300 disabled:opacity-35 text-paper-100 transition"
                     title="Ke Awal Pertandingan (ArrowUp)"
                   >
                     <ChevronFirst className="w-4 h-4" />
@@ -791,7 +979,7 @@ export default function HomePage() {
                     type="button"
                     onClick={() => goToPly(currentPly - 1)}
                     disabled={currentPly === 0 && !customFen}
-                    className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-200 transition"
+                    className="h-9 w-9 flex items-center justify-center rounded-[3px] bg-ink-900 ring-1 ring-ink-700 hover:ring-paper-300 disabled:opacity-35 text-paper-100 transition"
                     title="Langkah Sebelumnya (ArrowLeft)"
                   >
                     <ChevronLeft className="w-4 h-4" />
@@ -800,7 +988,7 @@ export default function HomePage() {
                     type="button"
                     onClick={() => goToPly(currentPly + 1)}
                     disabled={currentPly >= analysis.moves.length}
-                    className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-200 transition"
+                    className="h-9 w-9 flex items-center justify-center rounded-[3px] bg-ink-900 ring-1 ring-ink-700 hover:ring-paper-300 disabled:opacity-35 text-paper-100 transition"
                     title="Langkah Selanjutnya (ArrowRight)"
                   >
                     <ChevronRight className="w-4 h-4" />
@@ -809,11 +997,14 @@ export default function HomePage() {
                     type="button"
                     onClick={() => goToPly(analysis.moves.length)}
                     disabled={currentPly >= analysis.moves.length}
-                    className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-200 transition"
+                    className="h-9 w-9 flex items-center justify-center rounded-[3px] bg-ink-900 ring-1 ring-ink-700 hover:ring-paper-300 disabled:opacity-35 text-paper-100 transition"
                     title="Ke Akhir Pertandingan (ArrowDown)"
                   >
                     <ChevronLast className="w-4 h-4" />
                   </button>
+                  <span className="ml-2 font-mono text-xs text-paper-400 tabular">
+                    Ply {currentPly} / {analysis.moves.length}
+                  </span>
                 </div>
 
                 <div className="flex items-center gap-2">
@@ -824,9 +1015,9 @@ export default function HomePage() {
                         setCustomFen(null);
                         setCustomEval(null);
                       }}
-                      className="px-3 py-1.5 rounded-lg bg-sky-500/20 border border-sky-500/40 text-sky-300 text-xs font-semibold flex items-center gap-1.5"
+                      className="h-9 px-3 rounded-[3px] bg-ink-900 ring-1 ring-signal text-paper-100 text-xs font-medium flex items-center gap-1.5"
                     >
-                      <RotateCcw className="w-3.5 h-3.5" />
+                      <RotateCcw className="w-3.5 h-3.5 text-signal" />
                       <span>Kembali ke Partai</span>
                     </button>
                   )}
@@ -835,10 +1026,10 @@ export default function HomePage() {
                     <button
                       type="button"
                       onClick={handleStartNextRetryMistake}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition border ${
+                      className={`h-9 px-3 rounded-[3px] text-xs font-semibold flex items-center gap-1.5 transition ${
                         retryMode
-                          ? "bg-amber-500 text-slate-950 border-amber-400"
-                          : "bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border-amber-500/30"
+                          ? "bg-signal text-ink-950"
+                          : "bg-ink-900 ring-1 ring-ink-700 hover:ring-signal text-paper-100"
                       }`}
                       title="Latihan menebak langkah terbaik pada posisi Blunder/Mistake (FR-08)"
                     >
@@ -854,7 +1045,7 @@ export default function HomePage() {
                         prev === "white" ? "black" : "white"
                       )
                     }
-                    className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium flex items-center gap-1.5 transition"
+                    className="h-9 px-3 rounded-[3px] bg-ink-900 ring-1 ring-ink-700 hover:ring-paper-300 text-paper-100 text-xs font-medium flex items-center gap-1.5 transition"
                     title="Putar Papan (Flip Board)"
                   >
                     <FlipVertical2 className="w-3.5 h-3.5" />
@@ -865,27 +1056,18 @@ export default function HomePage() {
 
               {/* FR-08: Retry Mistake Interactive Banner */}
               {retryMode && currentMove && (
-                <div
-                  className={`rounded-xl p-4 border space-y-2.5 ${
-                    retryFeedback?.type === "success"
-                      ? "bg-emerald-500/15 border-emerald-500/40 text-emerald-200"
-                      : retryFeedback?.type === "error"
-                      ? "bg-red-500/15 border-red-500/40 text-red-200"
-                      : "bg-amber-500/15 border-amber-500/40 text-amber-200"
-                  }`}
-                >
+                <div className="p-4 border border-signal bg-ink-900 space-y-2.5">
                   <div className="flex items-start justify-between gap-3">
-                    <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider">
+                    <div className="flex items-center gap-2 text-xs font-mono font-semibold text-paper-100">
                       {retryFeedback?.type === "success" ? (
-                        <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                        <CheckCircle2 className="w-4 h-4 text-signal shrink-0" />
                       ) : retryFeedback?.type === "error" ? (
-                        <XCircle className="w-4 h-4 text-red-400 shrink-0" />
+                        <XCircle className="w-4 h-4 text-signal shrink-0" />
                       ) : (
-                        <Target className="w-4 h-4 text-amber-400 shrink-0" />
+                        <Target className="w-4 h-4 text-signal shrink-0" />
                       )}
                       <span>
-                        Mode Latihan &ldquo;Retry Mistake&rdquo; — Langkah{" "}
-                        {currentMove.moveNumber}
+                        Latihan Koreksi Langkah {currentMove.moveNumber}
                         {currentMove.color === "w" ? "." : "..."}
                       </span>
                     </div>
@@ -895,7 +1077,7 @@ export default function HomePage() {
                         <button
                           type="button"
                           onClick={() => setShowRetryHint(true)}
-                          className="px-2.5 py-1 rounded-lg bg-slate-900/80 hover:bg-slate-900 text-xs font-semibold text-amber-300 border border-amber-500/30 flex items-center gap-1"
+                          className="h-7 px-2.5 rounded-[3px] bg-ink-950 ring-1 ring-ink-700 hover:ring-paper-300 text-xs font-medium text-paper-100 flex items-center gap-1"
                         >
                           <Eye className="w-3.5 h-3.5" />
                           <span>Lihat Petunjuk</span>
@@ -904,69 +1086,56 @@ export default function HomePage() {
                       <button
                         type="button"
                         onClick={handleStartNextRetryMistake}
-                        className="px-2.5 py-1 rounded-lg bg-slate-900/80 hover:bg-slate-900 text-xs font-semibold text-white border border-slate-700"
+                        className="h-7 px-2.5 rounded-[3px] bg-paper-100 text-ink-950 text-xs font-semibold"
                       >
                         Kesalahan Berikutnya →
                       </button>
                     </div>
                   </div>
-                  <p className="text-xs leading-relaxed">
+                  <p className="text-xs text-paper-200 leading-relaxed">
                     {retryFeedback?.message}
                   </p>
                 </div>
               )}
 
               {/* Evaluation Graph (FR-06) */}
-              <EvalGraph
-                initialEval={analysis.initialEval}
-                moves={analysis.moves}
-                currentPly={currentPly}
-                onSelectPly={goToPly}
-              />
+              <div className="gsap-stage-block">
+                <EvalGraph
+                  initialEval={analysis.initialEval}
+                  moves={analysis.moves}
+                  currentPly={currentPly}
+                  onSelectPly={goToPly}
+                />
+              </div>
             </div>
 
-            {/* RIGHT COLUMN: Move Classification Coach + Engine Lines (MultiPV) + Move List + Summary Card */}
-            <div className="lg:col-span-5 xl:col-span-5 space-y-4">
-              {/* Current Move Classification & Coach Card (FR-05) */}
-              <div className="rounded-xl bg-slate-900/90 border border-slate-800 p-4 space-y-3">
+            {/* RIGHT COLUMN: Move Classification Coach + Engine Lines (MultiPV) + Scoresheet + Summary */}
+            <div className="lg:col-span-5 space-y-6">
+              {/* Current Move Classification & Engine Lines (FR-05) */}
+              <section
+                ref={coachPanelRef}
+                className="gsap-stage-block border-t-2 border-paper-100 pt-4 space-y-4"
+              >
                 {currentMove && !customFen ? (
                   <>
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2.5">
-                        <span
-                          className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-extrabold"
-                          style={{
-                            backgroundColor:
-                              CLASSIFICATION_META[currentMove.classification]
-                                .bgColor,
-                            color:
-                              CLASSIFICATION_META[currentMove.classification]
-                                .color,
-                            border: `1px solid ${
-                              CLASSIFICATION_META[currentMove.classification]
-                                .borderColor
-                            }`,
-                          }}
-                        >
-                          {
-                            CLASSIFICATION_META[currentMove.classification]
-                              .symbol
-                          }
-                        </span>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-start gap-3">
+                        <div className="gsap-coach-badge shrink-0 pt-0.5">
+                          <ChessComBadge
+                            classification={currentMove.classification}
+                            size={36}
+                          />
+                        </div>
                         <div>
-                          <div className="flex items-center gap-2">
-                            <span className="text-sm font-extrabold text-white">
+                          <div className="flex items-baseline gap-2.5">
+                            <span className="font-display text-2xl text-paper-100 leading-none">
                               {currentMove.moveNumber}
                               {currentMove.color === "w" ? "." : "..."}{" "}
                               {currentMove.san}
                             </span>
                             <span
-                              className="text-xs font-bold px-2 py-0.5 rounded-md"
+                              className="font-mono text-xs font-semibold"
                               style={{
-                                backgroundColor:
-                                  CLASSIFICATION_META[
-                                    currentMove.classification
-                                  ].bgColor,
                                 color:
                                   CLASSIFICATION_META[
                                     currentMove.classification
@@ -979,7 +1148,7 @@ export default function HomePage() {
                               }
                             </span>
                           </div>
-                          <p className="text-[11px] text-slate-400 mt-0.5">
+                          <p className="text-xs text-paper-300 mt-1 leading-relaxed">
                             {
                               CLASSIFICATION_META[currentMove.classification]
                                 .description
@@ -988,43 +1157,43 @@ export default function HomePage() {
                         </div>
                       </div>
 
-                      <div className="text-right font-mono">
-                        <div className="text-sm font-bold text-white">
+                      <div className="text-right font-mono tabular shrink-0">
+                        <div className="text-lg font-semibold text-paper-100 leading-none">
                           {formatEvalScore(
                             currentMove.evalAfter.cp,
                             currentMove.evalAfter.mate
                           )}
                         </div>
-                        <div className="text-[10px] text-slate-400">
-                          Win%: {currentMove.winProbAfter.toFixed(1)}%
+                        <div className="text-[11px] text-paper-400 mt-1">
+                          Win {currentMove.winProbAfter.toFixed(1)}%
                         </div>
                       </div>
                     </div>
 
-                    {/* Show comparison between played move and Stockfish best move */}
+                    {/* Comparison strip between played move and Stockfish best move */}
                     {!retryMode && (
-                      <div className="grid grid-cols-3 gap-2 pt-2 border-t border-slate-800/80 text-xs">
-                        <div className="p-2 rounded-lg bg-slate-950/70">
-                          <span className="text-[10px] text-slate-400 block">
-                            Saran Terbaik Engine
+                      <div className="grid grid-cols-3 divide-x divide-ink-700 border-y border-ink-700 py-2.5 text-xs">
+                        <div className="pr-3">
+                          <span className="text-[11px] text-paper-400 block">
+                            Saran Stockfish
                           </span>
-                          <span className="font-mono font-bold text-emerald-400">
+                          <span className="font-mono font-semibold text-paper-100">
                             {currentMove.bestMoveSan}
                           </span>
                         </div>
-                        <div className="p-2 rounded-lg bg-slate-950/70">
-                          <span className="text-[10px] text-slate-400 block">
-                            Penurunan ΔWin%
+                        <div className="px-3">
+                          <span className="text-[11px] text-paper-400 block">
+                            Selisih Win%
                           </span>
-                          <span className="font-mono font-bold text-slate-200">
+                          <span className="font-mono font-semibold text-paper-200 tabular">
                             -{currentMove.winProbLoss.toFixed(1)}%
                           </span>
                         </div>
-                        <div className="p-2 rounded-lg bg-slate-950/70">
-                          <span className="text-[10px] text-slate-400 block">
+                        <div className="pl-3">
+                          <span className="text-[11px] text-paper-400 block">
                             Akurasi Langkah
                           </span>
-                          <span className="font-mono font-bold text-sky-400">
+                          <span className="font-mono font-semibold text-paper-100 tabular">
                             {currentMove.moveAccuracy.toFixed(1)}%
                           </span>
                         </div>
@@ -1032,91 +1201,91 @@ export default function HomePage() {
                     )}
                   </>
                 ) : customFen ? (
-                  <div className="flex items-center justify-between text-xs">
-                    <div className="flex items-center gap-2">
-                      <Sparkles className="w-4 h-4 text-sky-400" />
+                  <div className="flex items-center justify-between text-xs py-1">
+                    <div className="flex items-center gap-2.5">
+                      <Compass className="w-4 h-4 text-signal shrink-0" />
                       <div>
-                        <div className="font-bold text-white">
-                          Eksplorasi Variasi Papan Bebas
+                        <div className="font-display text-lg text-paper-100 leading-none">
+                          Eksplorasi Posisi Bebas
                         </div>
-                        <div className="text-slate-400 text-[11px]">
+                        <div className="text-paper-300 text-xs mt-1 font-mono">
                           {isEvaluatingCustom
-                            ? "Stockfish sedang menghitung posisi ini..."
-                            : `Saran langkah terbaik: ${
+                            ? "Stockfish 19 sedang menghitung posisi ini..."
+                            : `Rekomendasi utama: ${
                                 activeEval.bestMoveUci || "-"
                               }`}
                         </div>
                       </div>
                     </div>
-                    <span className="font-mono font-bold text-sm text-sky-400">
+                    <span className="font-mono font-semibold text-base text-signal tabular">
                       {formatEvalScore(activeEval.cp, activeEval.mate)}
                     </span>
                   </div>
                 ) : (
-                  <div className="flex items-center justify-between text-xs">
-                    <div className="flex items-center gap-2">
-                      <BookOpen className="w-4 h-4 text-emerald-400" />
-                      <div>
-                        <div className="font-bold text-white">
-                          [{analysis.opening.eco}] {analysis.opening.name}
-                        </div>
-                        <div className="text-slate-400 text-[11px]">
-                          Gunakan tombol panah keyboard (← / →) atau klik daftar
-                          langkah di bawah untuk meninjau.
-                        </div>
+                  <div className="flex items-start gap-2.5 text-xs py-1">
+                    <BookOpen className="w-4 h-4 text-signal shrink-0 mt-0.5" />
+                    <div>
+                      <div className="font-display text-lg text-paper-100 leading-snug">
+                        <span className="font-mono text-sm text-signal mr-1.5">
+                          {analysis.opening.eco}
+                        </span>
+                        {analysis.opening.name}
                       </div>
+                      <p className="text-paper-300 text-xs mt-1">
+                        Gunakan tombol panah keyboard (← / →) atau klik notasi di
+                        bawah untuk menelusuri tiap langkah.
+                      </p>
                     </div>
                   </div>
                 )}
 
-                {/* Engine Lines / MultiPV Explorer (Persona 2: Club & Tournament Player) */}
+                {/* Engine Lines / MultiPV Explorer */}
                 {(!retryMode || retrySolved) && activeEval.lines.length > 0 && (
-                  <div className="pt-2 border-t border-slate-800/80 space-y-1.5">
-                    <div className="flex items-center justify-between text-[11px] text-slate-400">
-                      <span className="font-semibold">
-                        Jalur Variasi Stockfish (Depth {activeEval.depth})
-                      </span>
-                      <span className="font-mono text-[10px] text-emerald-400">
-                        {analysis.engineMode === "native-exe"
-                          ? "Stockfish 19 .EXE"
-                          : "Stockfish WASM"}
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between text-[11px] font-mono text-paper-400">
+                      <span>Jalur Variasi · Depth {activeEval.depth}</span>
+                      <span className="text-paper-300">
+                        {analysis.engineName}
                       </span>
                     </div>
                     {activeEval.lines.map((line) => (
                       <div
                         key={line.multipv}
-                        className="flex items-center gap-2 text-xs px-2.5 py-1.5 rounded-lg bg-slate-950/80 border border-slate-800/60 font-mono"
+                        className="gsap-coach-line flex items-center gap-2.5 text-xs py-1.5 px-2.5 bg-ink-900 ring-1 ring-ink-700 font-mono"
                       >
                         <span
-                          className={`px-1.5 py-0.5 rounded text-[10px] font-bold shrink-0 ${
+                          className={`px-1.5 py-0.5 rounded-[2px] text-[11px] font-semibold tabular shrink-0 ${
                             (line.cp ?? 0) >= 0
-                              ? "bg-slate-200 text-slate-900"
-                              : "bg-slate-800 text-slate-200 border border-slate-700"
+                              ? "bg-paper-100 text-ink-950"
+                              : "bg-ink-800 text-paper-100 ring-1 ring-ink-600"
                           }`}
                         >
                           {formatEvalScore(line.cp ?? 0, line.mate)}
                         </span>
-                        <span className="text-slate-300 truncate">
-                          {line.pv.slice(0, 7).join(" ")}
+                        <span className="text-paper-200 truncate">
+                          {line.pv.slice(0, 8).join(" ")}
                         </span>
                       </div>
                     ))}
                   </div>
                 )}
-              </div>
+              </section>
 
-              {/* Interactive Move List Table */}
-              <div className="rounded-xl bg-slate-900/90 border border-slate-800 overflow-hidden">
-                <div className="px-4 py-2.5 border-b border-slate-800 bg-slate-950/50 flex items-center justify-between text-xs">
-                  <span className="font-bold text-slate-200">
-                    Daftar Langkah ({analysis.moves.length} Ply)
-                  </span>
-                  <span className="text-[11px] text-slate-400">
-                    Klik langkah untuk melompat
+              {/* Scoresheet Move List Table */}
+              <section className="gsap-stage-block border-t border-ink-700 pt-4">
+                <div className="flex items-baseline justify-between mb-2.5">
+                  <h3 className="font-display text-xl leading-none">
+                    Lembar Notasi
+                  </h3>
+                  <span className="font-mono text-xs text-paper-400 tabular">
+                    {analysis.moves.length} ply
                   </span>
                 </div>
 
-                <div className="max-h-[250px] overflow-y-auto divide-y divide-slate-800/50 text-xs">
+                <div
+                  ref={moveListRef}
+                  className="max-h-[260px] overflow-y-auto border-y border-ink-700 divide-y divide-ink-800 text-xs"
+                >
                   {movePairs.map((pair) => {
                     const w = pair.white;
                     const b = pair.black;
@@ -1130,9 +1299,9 @@ export default function HomePage() {
                     return (
                       <div
                         key={pair.moveNumber}
-                        className="grid grid-cols-[44px_1fr_1fr] items-center hover:bg-slate-800/30 transition"
+                        className="grid grid-cols-[44px_1fr_1fr] items-center"
                       >
-                        <span className="py-2 px-3 font-mono text-slate-500 bg-slate-950/40">
+                        <span className="py-2 px-2.5 font-mono text-paper-400 tabular bg-ink-900/60">
                           {pair.moveNumber}.
                         </span>
 
@@ -1140,26 +1309,29 @@ export default function HomePage() {
                         {w && wMeta ? (
                           <button
                             type="button"
+                            data-ply={w.ply}
                             onClick={() => goToPly(w.ply)}
                             className={`py-2 px-3 text-left flex items-center justify-between gap-1.5 transition ${
                               currentPly === w.ply
-                                ? "bg-emerald-500/20 text-white font-bold"
-                                : "text-slate-200 hover:bg-slate-800/60"
+                                ? "bg-paper-100 text-ink-950 font-semibold"
+                                : "text-paper-100 hover:bg-ink-900"
                             }`}
                           >
                             <span className="font-mono flex items-center gap-1.5">
                               <span>{w.san}</span>
-                              <span
-                                className="text-[10px] font-bold px-1 rounded"
-                                style={{
-                                  color: wMeta.color,
-                                  backgroundColor: wMeta.bgColor,
-                                }}
-                              >
-                                {wMeta.symbol}
-                              </span>
+                              <ChessComBadge
+                                classification={w.classification}
+                                size={14}
+                                className="shrink-0"
+                              />
                             </span>
-                            <span className="text-[10px] font-mono text-slate-400">
+                            <span
+                              className={`text-[10px] font-mono tabular ${
+                                currentPly === w.ply
+                                  ? "text-ink-800"
+                                  : "text-paper-400"
+                              }`}
+                            >
                               {formatEvalScore(
                                 w.evalAfter.cp,
                                 w.evalAfter.mate
@@ -1174,26 +1346,29 @@ export default function HomePage() {
                         {b && bMeta ? (
                           <button
                             type="button"
+                            data-ply={b.ply}
                             onClick={() => goToPly(b.ply)}
                             className={`py-2 px-3 text-left flex items-center justify-between gap-1.5 transition ${
                               currentPly === b.ply
-                                ? "bg-emerald-500/20 text-white font-bold"
-                                : "text-slate-200 hover:bg-slate-800/60"
+                                ? "bg-paper-100 text-ink-950 font-semibold"
+                                : "text-paper-100 hover:bg-ink-900"
                             }`}
                           >
                             <span className="font-mono flex items-center gap-1.5">
                               <span>{b.san}</span>
-                              <span
-                                className="text-[10px] font-bold px-1 rounded"
-                                style={{
-                                  color: bMeta.color,
-                                  backgroundColor: bMeta.bgColor,
-                                }}
-                              >
-                                {bMeta.symbol}
-                              </span>
+                              <ChessComBadge
+                                classification={b.classification}
+                                size={14}
+                                className="shrink-0"
+                              />
                             </span>
-                            <span className="text-[10px] font-mono text-slate-400">
+                            <span
+                              className={`text-[10px] font-mono tabular ${
+                                currentPly === b.ply
+                                  ? "text-ink-800"
+                                  : "text-paper-400"
+                              }`}
+                            >
                               {formatEvalScore(
                                 b.evalAfter.cp,
                                 b.evalAfter.mate
@@ -1207,14 +1382,16 @@ export default function HomePage() {
                     );
                   })}
                 </div>
-              </div>
+              </section>
 
-              {/* Overall Game Review Summary Card (FR-05, FR-07, FR-08, Fase 3 Share) */}
-              <SummaryCard
-                analysis={analysis}
-                onStartRetryMistakes={handleStartNextRetryMistake}
-                mistakeAndBlunderCount={mistakeMoves.length}
-              />
+              {/* Overall Game Review Summary Card */}
+              <div className="gsap-stage-block">
+                <SummaryCard
+                  analysis={analysis}
+                  onStartRetryMistakes={handleStartNextRetryMistake}
+                  mistakeAndBlunderCount={mistakeMoves.length}
+                />
+              </div>
             </div>
           </div>
         )}
@@ -1222,4 +1399,3 @@ export default function HomePage() {
     </div>
   );
 }
-

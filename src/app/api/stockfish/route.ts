@@ -220,7 +220,7 @@ export async function GET() {
     available,
     engineName: available
       ? "Stockfish 19 Native (stockfish-windows-x86-64-universal.exe)"
-      : "Stockfish 16 WebAssembly (Browser Web Worker)",
+      : "Stockfish 19 WebAssembly (Browser Web Worker)",
     binaryPath: available
       ? "stockfish/stockfish-windows-x86-64-universal.exe"
       : null,

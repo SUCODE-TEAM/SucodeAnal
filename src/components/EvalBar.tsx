@@ -1,6 +1,7 @@
 "use client";
 
-import React from "react";
+import React, { useRef } from "react";
+import { gsap, useGSAP, MOTION_OK } from "@/lib/gsap";
 
 interface EvalBarProps {
   cp: number;
@@ -24,7 +25,10 @@ export default function EvalBar({
   winProbWhite,
   orientation,
 }: EvalBarProps) {
+  const fillRef = useRef<HTMLDivElement>(null);
   const whitePercent = Math.max(3, Math.min(97, winProbWhite));
+  // Only the first render sets height in markup; GSAP owns it afterwards
+  const initialPercent = useRef(whitePercent).current;
   const scoreText = formatEvalScore(cp, mate);
   const whiteAdvantage = mate !== null ? mate > 0 : cp >= 0;
 
@@ -32,56 +36,54 @@ export default function EvalBar({
   // If oriented for Black, White is at the top.
   const isWhiteBottom = orientation === "white";
 
+  // The white fill springs to the new evaluation instead of sliding linearly
+  useGSAP(
+    () => {
+      const mm = gsap.matchMedia();
+      mm.add(MOTION_OK, () => {
+        gsap.to(fillRef.current, {
+          height: `${whitePercent}%`,
+          duration: 0.9,
+          ease: "elastic.out(1, 0.75)",
+          overwrite: true,
+        });
+      });
+      mm.add("(prefers-reduced-motion: reduce)", () => {
+        gsap.set(fillRef.current, { height: `${whitePercent}%` });
+      });
+      return () => mm.revert();
+    },
+    { dependencies: [whitePercent] }
+  );
+
+  const labelAtBottom =
+    (whiteAdvantage && isWhiteBottom) || (!whiteAdvantage && !isWhiteBottom);
+
   return (
     <div
-      className="relative w-7 sm:w-8 h-full min-h-[320px] rounded-lg overflow-hidden border border-slate-700/80 bg-[#262421] flex flex-col select-none shadow-inner"
+      className="relative w-7 sm:w-9 h-full min-h-[320px] overflow-hidden rounded-[3px] bg-ink-800 ring-1 ring-ink-700 select-none"
       title={`Evaluasi: ${scoreText} (Peluang Menang Putih: ${winProbWhite.toFixed(
         1
       )}%)`}
     >
-      {isWhiteBottom ? (
-        <>
-          {/* Black top section */}
-          <div
-            className="w-full bg-[#262421] transition-all duration-300 ease-out"
-            style={{ height: `${100 - whitePercent}%` }}
-          />
-          {/* White bottom section */}
-          <div
-            className="w-full bg-[#f1f5f9] transition-all duration-300 ease-out"
-            style={{ height: `${whitePercent}%` }}
-          />
-        </>
-      ) : (
-        <>
-          {/* White top section */}
-          <div
-            className="w-full bg-[#f1f5f9] transition-all duration-300 ease-out"
-            style={{ height: `${whitePercent}%` }}
-          />
-          {/* Black bottom section */}
-          <div
-            className="w-full bg-[#262421] transition-all duration-300 ease-out"
-            style={{ height: `${100 - whitePercent}%` }}
-          />
-        </>
-      )}
-
-      {/* Center 50% tick line */}
-      <div className="absolute top-1/2 left-0 right-0 h-[1.5px] bg-emerald-500/50 pointer-events-none" />
-
-      {/* Score label positioned on the winning side */}
       <div
-        className={`absolute left-0 right-0 text-center text-[10px] font-bold tracking-tighter px-0.5 pointer-events-none ${
-          (whiteAdvantage && isWhiteBottom) ||
-          (!whiteAdvantage && !isWhiteBottom)
-            ? "bottom-1.5"
-            : "top-1.5"
-        } ${whiteAdvantage ? "text-slate-900" : "text-slate-200"}`}
+        ref={fillRef}
+        className={`absolute inset-x-0 bg-paper-100 ${
+          isWhiteBottom ? "bottom-0" : "top-0"
+        }`}
+        style={{ height: `${initialPercent}%` }}
+      />
+
+      {/* Equal position tick */}
+      <div className="absolute top-1/2 inset-x-0 h-px bg-signal/70 pointer-events-none" />
+
+      <div
+        className={`absolute inset-x-0 text-center font-mono text-[10px] font-semibold tabular pointer-events-none ${
+          labelAtBottom ? "bottom-1.5" : "top-1.5"
+        } ${whiteAdvantage ? "text-ink-950" : "text-paper-100"}`}
       >
         {scoreText}
       </div>
     </div>
   );
 }
-
